@@ -3,10 +3,6 @@ import sympy
 from scipy import interpolate
 from cached_property import cached_property
 import numpy as np
-try:
-    import matplotlib.pyplot as plt
-except:
-    plt = None
 
 from devito.types import Dimension, SparseTimeFunction
 

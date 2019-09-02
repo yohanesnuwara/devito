@@ -1,15 +1,4 @@
 import numpy as np
-try:
-    import matplotlib as mpl
-    import matplotlib.pyplot as plt
-    from matplotlib import cm
-    from mpl_toolkits.axes_grid1 import make_axes_locatable
-
-    mpl.rc('font', size=16)
-    mpl.rc('figure', figsize=(8, 6))
-except:
-    plt = None
-    cm = None
 
 
 def plot_perturbation(model, model1, colorbar=True):
