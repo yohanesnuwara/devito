@@ -147,13 +147,7 @@ def execute_devito(ui, spacing=0.01, a=0.5, timesteps=500):
 
 def animate(field):
     """Animate solution field"""
-    import matplotlib.pyplot as plt
-    xvals = np.linspace(0, 1., field.shape[0])
-    yvals = np.linspace(0, 1., field.shape[1])
-    levels = np.linspace(-.1, 1.1, 21)
-    cs = plt.contourf(xvals, yvals, field, levels=levels)
-    plt.colorbar(cs)
-    plt.show()
+    pass
 
 
 def test_diffusion2d(spacing=0.01, timesteps=1000):

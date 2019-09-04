@@ -11,13 +11,6 @@ import click
 import math
 import pandas as pd
 import numpy as np
-import matplotlib
-from matplotlib.ticker import ScalarFormatter
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt  # noqa
-
-# Use fancy plot colors
-plt.style.use('seaborn-darkgrid')
 
 
 @click.command()
