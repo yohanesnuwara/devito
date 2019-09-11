@@ -19,7 +19,7 @@ from devito.types import CompositeObject, Object
 # that has *already* initialized MPI
 try:
     import mpi4py
-    mpi4py.rc(initialize=False, finalize=False)
+    mpi4py.rc(initialize=False, finalize=False, recv_mprobe=False)
     from mpi4py import MPI  # noqa
 
     # From the `atexit` documentation: "At normal program termination [...]
