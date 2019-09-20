@@ -1,4 +1,5 @@
 import os
+from itertools import product
 
 import click
 
@@ -37,7 +38,7 @@ def generate(**kwargs):
     template_header = """\
 #!/bin/bash
 
-#PBS -lselect=%(nn)s:ncpus=%(ncpus)s:mem=120gb:mpiprocs=%(np)s:ompthreads=%(nt)s
+#PBS -lselect=%(nn_max)s:ncpus=%(ncpus)s:mem=120gb:mpiprocs=%(np)s:ompthreads=%(nt)s
 #PBS -lwalltime=02:00:00
 
 lscpu
@@ -58,23 +59,23 @@ export DEVITO_LOGGING=DEBUG
 cd benchmarks/user
 """  # noqa
     template_cmd = """\
-DEVITO_MPI=%(mpi)s mpiexec python benchmark.py bench -P %(problem)s -bm O2 -d %(shape)s -so %(space_order)s --tn %(tn)s -x 1 --arch %(arch)s -r %(resultsdir)s\
+DEVITO_MPI=%(mpi)s mpiexec -np %(nn_doubled)s python benchmark.py bench -P %(problem)s -bm O2 -d %(shape)s -so %(space_order)s --tn %(tn)s -x 1 --arch %(arch)s -r %(resultsdir)s\
 """  # noqa
 
-    # Generate one PBS file for each `np` value
-    for nn in kwargs['nn']:
-        args['nn'] = nn
+    nns = [int(i) for i in kwargs['nn']]
+    args['nn_max'] = str(max(nns))
 
-        cmds = []
-        for i in kwargs['mpi']:
-            args['mpi'] = i
-            cmds.append(template_cmd % args)
-        cmds = ' \n'.join(cmds)
+    cmds = []
+    for i, nn in product(kwargs['mpi'], nns):
+        args['mpi'] = i
+        args['nn_doubled'] = str(nn*2)
+        cmds.append(template_cmd % args)
+    cmds = ' \n'.join(cmds)
 
-        body = ' \n'.join([template_header % args, cmds])
+    body = ' \n'.join([template_header % args, cmds])
 
-        with open('pbs_nn%d.gen.sh' % int(nn), 'w') as f:
-            f.write(body)
+    with open('pbs_nn%d-%d.gen.sh' % (min(nns), max(nns)), 'w') as f:
+        f.write(body)
 
 
 @menu.command(name='cleanup')
