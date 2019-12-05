@@ -751,9 +751,10 @@ class DiscreteFunction(AbstractFunction, ArgProvider):
         """
         key = alias or self
         args = ReducerMap({key.name: self._data_buffer})
+        subs = self._subdomain.dimensions if self._subdomain else key.dimensions
 
         # Collect default dimension arguments from all indices
-        for i, s in zip(key.dimensions, self.shape):
+        for i, s in zip(subs, self.shape):
             args.update(i._arg_defaults(_min=0, size=s))
 
         # Add MPI-related data structures
@@ -951,6 +952,8 @@ class Function(DiscreteFunction, Differentiable):
         # parameter has to be computed at x + hx/2)
         self._is_parameter = kwargs.get('parameter', False)
 
+        self._subdomain = kwargs.get('subdomain', None)
+
     @property
     def is_parameter(self):
         return self._is_parameter
@@ -994,6 +997,8 @@ class Function(DiscreteFunction, Differentiable):
         grid = kwargs.get('grid')
         dimensions = kwargs.get('dimensions')
         shape = kwargs.get('shape', kwargs.get('shape_global'))
+        subdomain = kwargs.get('subdomain', None)
+
         if grid is None:
             if shape is None:
                 raise TypeError("Need either `grid` or `shape`")
@@ -1025,31 +1030,8 @@ class Function(DiscreteFunction, Differentiable):
                     loc_shape.append(s)
             shape = tuple(loc_shape)
 
-        # If a subdomain is defined, we need to update the shape to match the
-        # subdomain size.
-        subdomain = kwargs.get('subdomain')
-        from devito import SubDomain # noqa
-        shape_builder = []
-        if subdomain and isinstance(subdomain, SubDomain):
-            for i, (k, v) in enumerate(subdomain.define(dimensions or grid.dimensions).
-                items()):
-
-                # Case in which this subdomain dimensions has the same size as the grid.
-                if isinstance(v, Dimension):
-                    shape_builder.append(shape[i])
-                    continue
-
-                side, *thickness = v
-                if side == 'middle':
-                    shape_builder.append(shape[i] - (thickness[0] - 1 + thickness[1] - 1))
-                elif side == 'left':
-                    shape_builder.append(thickness[0])
-                elif side == 'right':
-                    shape_builder.append(shape[i] - thickness[0])
-
-            shape = tuple(shape_builder) if shape_builder else shape
-            print(shape)
-
+        if subdomain:
+            shape = subdomain.shape
         return shape
 
     def __halo_setup__(self, **kwargs):

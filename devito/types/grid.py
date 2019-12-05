@@ -384,6 +384,9 @@ class SubDomain(object):
                         sdshape.append(thickness)
                     else:
                         raise ValueError("Expected sides 'left|right', not `%s`" % side)
+
+                    shape_builder.append(thickness)
+
         self._dimensions = tuple(sub_dimensions)
 
         # Compute the SubDomain shape
