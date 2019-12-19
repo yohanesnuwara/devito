@@ -21,7 +21,7 @@ from devito.symbolics import FieldFromPointer
 from devito.finite_differences import Differentiable, generate_fd_shortcuts
 from devito.tools import (ReducerMap, as_tuple, flatten, is_integer,
                           ctypes_to_cstr, memoized_meth, dtype_to_ctype)
-from devito.types.dimension import Dimension
+from devito.types.dimension import Dimension, SubDimension
 from devito.types.args import ArgProvider
 from devito.types.caching import CacheManager
 from devito.types.basic import AbstractFunction, Size
@@ -60,6 +60,8 @@ class DiscreteFunction(AbstractFunction, ArgProvider):
 
         # Staggering metadata
         self._staggered = self.__staggered_setup__(**kwargs)
+
+        self._subdomain = kwargs.get('subdomain', None)
 
         # Now that *all* __X_setup__ hooks have been called, we can let the
         # superclass constructor do its job
@@ -162,9 +164,12 @@ class DiscreteFunction(AbstractFunction, ArgProvider):
 
     def __distributor_setup__(self, **kwargs):
         grid = kwargs.get('grid')
+        subdomain = kwargs.get('subdomain')
         # There may or may not be a `Distributor`. In the latter case, the
         # DiscreteFunction is to be considered "local" to each MPI rank
-        return kwargs.get('distributor') if grid is None else grid.distributor
+        dist = kwargs.get('distributor') if grid is None else grid.distributor
+
+        return dist
 
     @cached_property
     def _functions(self):
@@ -199,6 +204,10 @@ class DiscreteFunction(AbstractFunction, ArgProvider):
     def coefficients(self):
         """Form of the coefficients of the function."""
         return self._coefficients
+
+    @property
+    def subdomain(self):
+        return self._subdomain
 
     @cached_property
     def _coeff_symbol(self):
@@ -368,7 +377,9 @@ class DiscreteFunction(AbstractFunction, ArgProvider):
         """
         if self._distributor is None:
             return (None,)*self.ndim
+
         mapper = {d: self._distributor.decomposition[d] for d in self._dist_dimensions}
+
         return tuple(mapper.get(d) for d in self.dimensions)
 
     @cached_property
@@ -379,6 +390,7 @@ class DiscreteFunction(AbstractFunction, ArgProvider):
         """
         if self._distributor is None:
             return (None,)*self.ndim
+
         return tuple(v.reshape(*self._size_inhalo[d]) if v is not None else v
                      for d, v in zip(self.dimensions, self._decomposition))
 
@@ -588,6 +600,7 @@ class DiscreteFunction(AbstractFunction, ArgProvider):
         """Tuple of MPI-distributed Dimensions."""
         if self._distributor is None:
             return ()
+
         return tuple(d for d in self.dimensions if d in self._distributor.dimensions)
 
     @property
@@ -952,7 +965,17 @@ class Function(DiscreteFunction, Differentiable):
         # parameter has to be computed at x + hx/2)
         self._is_parameter = kwargs.get('parameter', False)
 
-        self._subdomain = kwargs.get('subdomain', None)
+        if self._subdomain:
+            d_sub_builder = []
+            for e, d in enumerate(self._subdomain.dimensions):
+                # Shift the initial position to the beginning of the array.
+                d_sub_builder.append(SubDimension.left('submap_%s' % d.name,
+                                     parent=d.root, thickness=self.shape[e]))
+            self._dimensions_mapper = tuple(d_sub_builder)
+
+            if self._distributor:
+                from devito.mpi import Distributor
+                self._distributor = Distributor(self.shape, self._dimensions_mapper, self._distributor.comm)
 
     @property
     def is_parameter(self):
@@ -1032,6 +1055,7 @@ class Function(DiscreteFunction, Differentiable):
 
         if subdomain:
             shape = subdomain.shape
+
         return shape
 
     def __halo_setup__(self, **kwargs):
@@ -1128,9 +1152,19 @@ class Function(DiscreteFunction, Differentiable):
         tot = self.sum(p, dims)
         return tot / len(tot.args)
 
+    def apply_submap(self):
+        if not self.subdomain:
+            return
+
+        if self._distributor:
+            self._dimensions = tuple([d for d in self._distributor.dimensions])
+        else:
+            self._dimensions = self._dimensions_mapper
+
     # Pickling support
     _pickle_kwargs = DiscreteFunction._pickle_kwargs +\
         ['space_order', 'shape_global', 'dimensions']
+
 
 class TimeFunction(Function):
 

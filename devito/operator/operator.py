@@ -232,6 +232,22 @@ class Operator(Callable):
     # Compilation -- Expression level
 
     @classmethod
+    def _apply_submap(cls, expressions):
+        """
+        Shift indices for Function defined over a subdomain.
+
+        Functions in a subdomain need their indices shifted so the region accessed is
+        valid.
+        """
+        for e in expressions:
+            for f in retrieve_functions(e):
+                if f.subdomain:
+                    f.apply_submap()
+
+        return expressions
+
+
+    @classmethod
     def _add_implicit(cls, expressions):
         """
         Create and add any associated implicit expressions.
@@ -263,6 +279,26 @@ class Operator(Callable):
                 processed.append(e)
         return processed
 
+    def _shift_function_accesses(self, expressions):
+        """
+        Shift the dimension for Function with SubDomain attached.
+
+        If a Function has a SubDomain attached, the data is allocated with the exactly
+        size required by the SubDomain. Accessing the data from this Function requires a
+        shift in its indices.
+        """
+        processed = []
+        for e in expressions:
+            mapper = OrderedDict()
+            for f in retrieve_functions(e):
+                if f.subdomain:
+                    new_f = f
+                    for d, s_d in zip(f.dimensions, f.subdomain.dimensions):
+                        new_f = new_f.subs({d: d - s_d.thickness.left[0]})
+                    mapper.update(OrderedDict([(f, new_f) for d in f.dimensions]))
+            processed.append(e.xreplace(mapper))
+        return processed
+
     @classmethod
     def _initialize_state(cls, **kwargs):
         return {'optimizations': kwargs.get('mode', configuration['opt'])}
@@ -287,7 +323,11 @@ class Operator(Callable):
             * Apply substitution rules;
             * Specialize (e.g., index shifting)
         """
+
+        subs = kwargs.get("subs", {})
+
         # Add in implicit expressions, e.g., induced by SubDomains
+        expressions = cls._apply_submap(expressions)
         expressions = cls._add_implicit(expressions)
 
         # Unfold lazyiness
