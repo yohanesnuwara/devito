@@ -5,12 +5,9 @@ from tempfile import gettempdir
 
 tempdir = gettempdir()
 
-# TODO: change this to the classroom repo location
-repodir = path.join(tempdir, 'classroom-dummydir')
-# TODO: replace the line below with a check ensuring that the repo has indeed been cloned
-makedirs(repodir, exist_ok=True)
+repodir = path.dirname(path.realpath(__file__))
 
-# The directory where to move the C files
+# The directory where the generated files will be copied
 targetdir = path.join(repodir, 'edited-files')
 makedirs(targetdir, exist_ok=True)
 
@@ -28,12 +25,12 @@ for i in listdir(jitcachedir):
         copy(targetfile, targetdir)
         print("Copied `%s` to `%s`" % (targetfile, targetdir))
 
+# Make sure we are in the root repo directory
+chdir(repodir)
+
 # git-add copied files
-# TODO: uncomment below once we have a classroom repo
-# chdir(repodir)
-# check_call(['git', 'add', targetdir])
+check_call(['git', 'add', 'edited-files/'])
 
 # git-commit and git-push staged files
-# TODO: uncomment below once we have a classroom repo
-# check_call(['git', 'commit', '-am', 'Push files edited with JIT-BACKDOOR'])
-# check_call(['git', 'push'])
+check_call(['git', 'commit', '-am', 'Push files edited with JIT-BACKDOOR'])
+check_call(['git', 'push'])
