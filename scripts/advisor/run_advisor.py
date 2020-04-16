@@ -26,11 +26,12 @@ import click
 @click.option('--advisor-home', help='Path to Intel Advisor. Defaults to /opt/intel'
                                      '/advisor, the directory in which the Intel '
                                      'Compiler suite is installed by default.')
-@click.option('--plot/--no-plot', default=True, help='Generate a roofline.')
-def run_with_advisor(path, output, name, exec_args, advisor_home, plot):
+
+def run_with_advisor(path, output, name, exec_args, advisor_home):
     path = Path(path)
     check(path.is_file(), '%s not found' % path)
     check(path.suffix == '.py', '%s not a regular Python file' % path)
+    pyversion = sys.executable
 
     # Create a directory to store the profiling report
     if name is None:
@@ -104,11 +105,12 @@ def run_with_advisor(path, output, name, exec_args, advisor_home, plot):
     ]
     advisor_cmd = [
         'advixe-cl',
-        '-q',  # Silence advisor
         '-data-limit=500',
+        '-q',  # Silence advisor
         '-project-dir', str(output),
         '-search-dir src:r=%s' % gettempdir(),  # Root directory where Devito stores the generated code  # noqa
     ]
+    # Uncomment options to avoid several warnings
     advisor_survey = [
         '-collect survey',
         '-start-paused',
@@ -120,7 +122,9 @@ def run_with_advisor(path, output, name, exec_args, advisor_home, plot):
         '-collect tripcounts',
         '-flop',
     ]
-    py_cmd = ['python', str(path)] + exec_args.split()
+
+
+    py_cmd = [pyversion, str(path)] + exec_args.split()
 
     # To build a roofline with Advisor, we need to run two analyses back to
     # back, `survey` and `tripcounts`. These are preceded by a "pure" python
@@ -144,20 +148,15 @@ def run_with_advisor(path, output, name, exec_args, advisor_home, plot):
     # Finally, generate a roofline
     # TODO: Intel Advisor 2018 doesn't cope well with Python 3.5, so we rather use
     # the embedded advixe-python
-    if plot:
-        with progress('Generating roofline char for `%s`' % name):
-            cmd = [
-                'python2.7',
-                'roofline.py',
-                '--name %s' % name,
-                '--project %s' % output,
-                '--scale %f' % n_sockets
-            ]
-            check(check_call(cmd) == 0, 'Failed!')
+    log('`survey` and `tripcounts` data are saved in `%s`' % str(output))
+    log('To plot a roofline, type')
+    print(pyversion, 'roofline.py', '--name %s' % name, '--project %s' % output,
+           '--scale %f' % n_sockets)
 
-
+# Releases that have been tested to work
 supported_releases = [
-    'Intel(R) Advisor 2018 Update 3'
+    'Intel(R) Advisor 2018 Update 3',
+    'Intel(R) Advisor 2020 Update 1'
 ]
 
 

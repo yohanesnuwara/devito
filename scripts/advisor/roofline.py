@@ -4,17 +4,22 @@ Generate a roofline for the Intel Advisor ``project``.
 This module has been partly extracted from the examples directory of Intel Advisor 2018.
 """
 
-import advisor
-
 import click
-
 import math
-import pandas as pd
-import numpy as np
 import matplotlib
 from matplotlib.ticker import ScalarFormatter
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt  # noqa
+import sys
+import numpy as nps
+
+import pandas as pd
+
+# First import the Advisor library
+try:
+	import advisor
+except ImportError:
+    sys.exit(1)
 
 # Use fancy plot colors
 plt.style.use('seaborn-darkgrid')
@@ -36,13 +41,15 @@ plt.style.use('seaborn-darkgrid')
 def roofline(name, project, scale, precision):
     pd.options.display.max_rows = 20
 
+    print("Opening project...")
     project = advisor.open_project(str(project))
+    print("Loading data...")
     data = project.load(advisor.SURVEY)
     rows = [{col: row[col] for col in row} for row in data.bottomup]
     roofs = data.get_roofs()
+    df = pd.DataFrame(rows).replace('', nps.nan)
 
-    df = pd.DataFrame(rows).replace('', np.nan)
-
+    # import pdb; pdb.set_trace();
     df.self_ai = df.self_ai.astype(float)
     df.self_gflops = df.self_gflops.astype(float)
 
@@ -103,6 +110,8 @@ def roofline(name, project, scale, precision):
 
     # saving the chart in PDF format
     plt.savefig('%s.pdf' % name)
+    print("Figure saved")
+
 
 
 if __name__ == '__main__':
