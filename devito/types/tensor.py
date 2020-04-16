@@ -3,7 +3,7 @@ from collections import OrderedDict
 import numpy as np
 from sympy.core.sympify import converter as sympify_converter
 
-from devito.finite_differences import Differentiable
+from devito.finite_differences import DifferentiableMatrix
 from devito.types.basic import AbstractTensor
 from devito.types.dense import Function, TimeFunction
 from devito.types.utils import NODE
@@ -11,7 +11,7 @@ from devito.types.utils import NODE
 __all__ = ['TensorFunction', 'TensorTimeFunction', 'VectorFunction', 'VectorTimeFunction']
 
 
-class TensorFunction(AbstractTensor, Differentiable):
+class TensorFunction(AbstractTensor, DifferentiableMatrix):
     """
     Tensor valued Function represented as a Matrix.
     Each component is a Function or TimeFunction.
@@ -31,7 +31,7 @@ class TensorFunction(AbstractTensor, Differentiable):
     """
     _is_TimeDependent = False
     _sub_type = Function
-    _op_priority = Differentiable._op_priority + 2.
+    _op_priority = DifferentiableMatrix._op_priority + 2.
     _class_priority = 10
 
     def __init_finalize__(self, *args, **kwargs):
@@ -48,7 +48,7 @@ class TensorFunction(AbstractTensor, Differentiable):
         comps = kwargs.get("components")
         if comps is not None:
             return comps
-        funcs = []
+
         grid = kwargs.get("grid")
         if grid is None:
             dims = kwargs.get('dimensions')
@@ -59,22 +59,27 @@ class TensorFunction(AbstractTensor, Differentiable):
         stagg = kwargs.get("staggered", None)
         name = kwargs.get("name")
         symm = kwargs.get('symmetric', True)
+        diag = kwargs.get('diagonal', False)
+
+        funcs = []
         # Fill tensor, only upper diagonal if symmetric
         for i, d in enumerate(dims):
-            funcs2 = [0 for _ in range(i)] if symm else []
+            funcs2 = [0 for _ in range(len(dims))]
             start = i if symm else 0
-            for j in range(start, len(dims)):
+            stop = i + 1 if diag else len(dims)
+            print(symm, diag, start, stop)
+            for j in range(start, stop):
                 kwargs["name"] = "%s_%s%s" % (name, d.name, dims[j].name)
                 kwargs["staggered"] = (stagg[i][j] if stagg is not None
                                        else (NODE if i == j else (d, dims[j])))
-                funcs2.append(cls._sub_type(**kwargs))
+                funcs2[j] = cls._sub_type(**kwargs)
             funcs.append(funcs2)
 
         # Symmetrize and fill diagonal if symmetric
         if symm:
             funcs = np.array(funcs) + np.triu(np.array(funcs), k=1).T
             funcs = funcs.tolist()
-        return funcs
+        return funcs, (grid.dim, grid.dim)
 
     def __getattr__(self, name):
         """
@@ -96,7 +101,7 @@ class TensorFunction(AbstractTensor, Differentiable):
         def entries(i, j, func):
             return getattr(self[i, j], '_eval_at', lambda x: self[i, j])(func[i, j])
         entry = lambda i, j: entries(i, j, func)
-        return self._new(self.rows, self.cols, entry)
+        return self.__new__(self.rows, self.cols, entry)
 
     @classmethod
     def __dtype_setup__(cls, **kwargs):
@@ -113,11 +118,12 @@ class TensorFunction(AbstractTensor, Differentiable):
 
     @property
     def is_diagonal(self):
-        return super(TensorFunction, self).is_diagonal()
+        return np.all([self[i, j] == 0  for j in range(self.cols)
+                       for i in range(self.rows) if i != j])
 
     @property
     def is_symmetric(self):
-        return super(TensorFunction, self).is_symmetric()
+        return np.all(self._comps.T == self._comps)
 
     @property
     def indices(self):
@@ -153,11 +159,7 @@ class TensorFunction(AbstractTensor, Differentiable):
 
     # Custom repr and str
     def __str__(self):
-        name = "SymmetricTensor" if self.is_symmetric else "Tensor"
-        if self.is_diagonal:
-            name = "DiagonalTensor"
-        st = ''.join([' %-2s,' % c for c in self.values()])
-        return "%s(%s)" % (name, st)
+        return "%s(%s)" % (self.name, self.indices)
 
     __repr__ = __str__
 
@@ -169,22 +171,7 @@ class TensorFunction(AbstractTensor, Differentiable):
         return arg
 
     def _entry(self, i, j, **kwargs):
-        return self.__getitem__(i, j)
-
-    def __getitem__(self, *args):
-        if len(args) == 1:
-            return super(TensorFunction, self).__getitem__(*args)
-        i, j = args
-        if self.is_diagonal:
-            if i == j:
-                return super(TensorFunction, self).__getitem__(i, j)
-            return 0.0
-        if self.is_symmetric:
-            if j < i:
-                return super(TensorFunction, self).__getitem__(j, i)
-            else:
-                return super(TensorFunction, self).__getitem__(i, j)
-        return super(TensorFunction, self).__getitem__(i, j)
+        return self._comps[i, j]
 
     def values(self):
         if self.is_diagonal:
@@ -315,9 +302,9 @@ class VectorFunction(TensorFunction):
         for i, d in enumerate(dims):
             kwargs["name"] = "%s_%s" % (name, d.name)
             kwargs["staggered"] = stagg[i] if stagg is not None else d
-            funcs.append(cls._sub_type(**kwargs))
+            funcs.append([cls._sub_type(**kwargs)])
 
-        return funcs
+        return funcs, (grid.dim, 1)
 
     # Custom repr and str
     def __str__(self):
