@@ -82,7 +82,7 @@ jobs:
               git checkout ${{ steps.extract_branch.outputs.branch }}
           fi
           # Ensure any new requirements are installed
-          pip install -r requirements.txt
+          pip3 install -r requirements.txt
           # Set error trap to catch any failing test
           err=0
           trap 'err=1' ERR
