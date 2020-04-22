@@ -14,17 +14,17 @@ def iso_stencil(field, b, v, wOverQ, **kwargs):
 
     Parameters
     ----------
-    field : TimeFunction
+    field : TimeFunction, required
         The pressure wavefield computed solution.
-    b : Function
+    b : Function, required
         Buoyancy = reciprocal density (units: m^3/kg)
-    v : Function
+    v : Function, required
         Velocity (units: m/msec or km/sec)
-    wOverQ : Function
+    wOverQ : Function, required
         The w/Q field for dissipation only attenuation.
-    forward : bool
+    forward : bool, optional
         The propagation direction. Defaults to True.
-    q : TimeFunction, Function or float
+    q : TimeFunction, Function or float, optional
         Full-space/time source of the wave-equation.
     """
 
@@ -57,23 +57,26 @@ def iso_stencil(field, b, v, wOverQ, **kwargs):
     return [Eq(field_next, eq_time_update)]
 
 
-def ForwardOperator(b, v, wOverQ, geometry, dt, space_order=8,
-                    save=False, **kwargs):
+def SSA_ISO_ForwardOperator(b, v, wOverQ, src, rec, time_axis, 
+                            space_order=8, save=False, **kwargs):
     """
     Construct a forward modeling operator in a variable density visco- acoustic media.
     See implementation notebook ssa_01_iso_implementation1.ipynb for more details.
 
     Parameters
     ----------
-    b : Function
+    b : Function, required
         Buoyancy = reciprocal density (units: m^3/kg)
-    v : Function
+    v : Function, required
         Velocity (units: m/msec or km/sec)
-    wOverQ : Function
+    wOverQ : Function, required
         The w/Q field for dissipation only attenuation.
-    geometry : AcquisitionGeometry
-        Geometry object that contains the source (SparseTimeFunction) and
-        receivers (SparseTimeFunction) and their position.
+    src : SparseTimeFunction (PointSource)
+        Source position and time signature.
+    rec : SparseTimeFunction (PointSource)
+        Receiver positions and time siganture.
+    time_axis : TimeAxis 
+        Defines temporal sampling
     space_order : int, optional, Defaults to 8
         Space discretization order.
     save : int or Buffer, optional
@@ -82,36 +85,31 @@ def ForwardOperator(b, v, wOverQ, geometry, dt, space_order=8,
     """
 
     # Create symbols for wavefield, source and receivers
-    P = TimeFunction(name='P', grid=geometry.grid,
-                     save=geometry.nt if save else None,
+    p = TimeFunction(name='p', grid=v.grid,
+                     save=time_axis.num if save else None,
                      time_order=2, space_order=space_order)
 
-    src = PointSource(name='src', grid=geometry.grid, time_range=geometry.time_axis,
-                      npoint=geometry.nsrc)
+    # Time update equation
+    eqn = iso_stencil(p, b, v, wOverQ, forward=True)
 
-    rec = Receiver(name='rec', grid=geometry.grid, time_range=geometry.time_axis,
-                   npoint=geometry.nrec)
-
-    # time update equation
-    eqn = iso_stencil(P, b, v, wOverQ, forward="True")
-
-    # Construct expression to inject source values, injecting at P(t+dt)
+    # Construct expression to inject source values, injecting at p(t+dt)
     t = v.dimensions[0]
-    src_term = src.inject(field=P.forward, expr=src * t.spacing**2 * v**2 / b)
+    src_term = src.inject(field=p.forward, expr=src * t.spacing**2 * v**2 / b)
 
-    # Create interpolation expression for receivers, extracting at P(t)
-    rec_term = rec.interpolate(expr=P)
+    # Create interpolation expression for receivers, extracting at p(t)
+    rec_term = rec.interpolate(expr=p)
 
     # Substitute spacing terms to reduce flops
+    dt = time_axis.step
     spacing_map = v.grid.spacing_map
-    spacing_map.update({t.spacing : dt})
+    spacing_map.update({t.spacing: dt})
 
     return Operator(eqn + src_term + rec_term, subs=spacing_map,
-                    name='ForwardOperator', **kwargs)
+                    name='SSA_ISO_ForwardOperator', **kwargs)
 
 
-def AdjointOperator(b, v, wOverQ, geometry, dt, space_order=8,
-                    save=False, **kwargs):
+def SSA_ISO_AdjointOperator(b, v, wOverQ, src, rec, time_axis
+                            space_order=8, save=False, **kwargs):
     """
     Construct a adjoint modeling operator in a variable density visco- acoustic media.
     Note the FD evolution will be time reversed.
@@ -119,15 +117,18 @@ def AdjointOperator(b, v, wOverQ, geometry, dt, space_order=8,
 
     Parameters
     ----------
-    b : Function
+    b : Function, required
         Buoyancy = reciprocal density (units: m^3/kg)
-    v : Function
+    v : Function, required
         Velocity (units: m/msec or km/sec)
-    wOverQ : Function
+    wOverQ : Function, required
         The w/Q field for dissipation only attenuation.
-    geometry : AcquisitionGeometry
-        Geometry object that contains the source (SparseTimeFunction) and
-        receivers (SparseTimeFunction) and their position.
+    src : SparseTimeFunction (PointSource)
+        Source position and time signature.
+    rec : SparseTimeFunction (PointSource)
+        Receiver positions and time siganture.
+    time_axis : TimeAxis 
+        Defines temporal sampling
     space_order : int, optional, Defaults to 8
         Space discretization order.
     save : int or Buffer, optional
@@ -136,7 +137,7 @@ def AdjointOperator(b, v, wOverQ, geometry, dt, space_order=8,
     """
 
     # Create symbols for wavefield, source and receivers
-    Ptilde = TimeFunction(name='Ptilde', grid=geometry.grid,
+    p = TimeFunction(name='p', grid=geometry.grid,
                           save=geometry.nt if save else None,
                           time_order=2, space_order=space_order)
 
@@ -146,47 +147,51 @@ def AdjointOperator(b, v, wOverQ, geometry, dt, space_order=8,
     rec = Receiver(name='rec', grid=geometry.grid, time_range=geometry.time_axis,
                    npoint=geometry.nrec)
 
-    eqn = iso_stencil(Ptilde, b, v, wOverQ, forward="False")
+    # Time update equation
+    eqn = iso_stencil(p, b, v, wOverQ, forward="False")
 
-    # Construct expression to inject receiver values, injecting at P(t-dt)
+    # Construct expression to inject receiver values, injecting at p(t-dt)
     t = v.dimensions[0]
-    receivers = rec.inject(field=Ptilde.backward, expr=rec * t.spacing**2 * v**2 / b)
+    receivers = rec.inject(field=p.backward, expr=rec * t.spacing**2 * v**2 / b)
 
-    # Create interpolation expression for the adjoint-source, extracting at P(t)
-    source_a = srca.interpolate(expr=Ptilde)
+    # Create interpolation expression for the adjoint-source, extracting at p(t)
+    source_a = srca.interpolate(expr=p)
 
     # Substitute spacing terms to reduce flops
     spacing_map = v.grid.spacing_map
-    spacing_map.update({t.spacing : dt})
+    spacing_map.update({t.spacing: dt})
 
     return Operator(eqn + receivers + source_a, subs=spacing_map,
-                    name='AdjointOperator', **kwargs)
+                    name='SSA_ISO_AdjointOperator', **kwargs)
 
 
-def JacobianForwardOperator(b, v, wOverQ, geometry, dt, space_order=8,
-                            save=False, **kwargs):
+def SSA_ISO_JacobianForwardOperator(b, v, wOverQ, src, rec, time_axis,
+                                    space_order=8, save=False, **kwargs):
     """
     Construct a linearized JacobianForward modeling operator in a variable density
     visco- acoustic media.
 
     Parameters
     ----------
-    b : Function
+    b : Function, required
         Buoyancy = reciprocal density (units: m^3/kg)
-    v : Function
+    v : Function, required
         Velocity (units: m/msec or km/sec)
-    wOverQ : Function
+    wOverQ : Function, required
         The w/Q field for dissipation only attenuation.
-    geometry : AcquisitionGeometry
-        Geometry object that contains the source (SparseTimeFunction) and
-        receivers (SparseTimeFunction) and their position.
+    src : SparseTimeFunction (PointSource)
+        Source position and time signature.
+    rec : SparseTimeFunction (PointSource)
+        Receiver positions and time siganture.
+    time_axis : TimeAxis 
+        Defines temporal sampling
     space_order : int, optional, Defaults to 8
         Space discretization order.
     save : int or Buffer, optional
         Saving flag, True saves all time steps. False saves three timesteps.
         Defaults to False.
     """
-    
+
     # Create source and receiver symbols
     src = Receiver(name='src', grid=geometry.grid, time_range=geometry.time_axis,
                    npoint=geometry.nsrc)
@@ -194,76 +199,93 @@ def JacobianForwardOperator(b, v, wOverQ, geometry, dt, space_order=8,
     rec = Receiver(name='rec', grid=geometry.grid, time_range=geometry.time_axis,
                    npoint=geometry.nrec)
 
-    # Create P0, dP wavefields and dv velocity perturbation field
-    P0 = TimeFunction(name="P0", grid=geometry.grid, save=None,
+    # Create p0, dp wavefields and dv velocity perturbation field
+    p0 = TimeFunction(name="p0", grid=geometry.grid,
+                      save=geometry.nt if save else None,
                       time_order=2, space_order=space_order)
-    
-    dP = TimeFunction(name="dP", grid=geometry.grid, save=None,
+
+    dp = TimeFunction(name="dp", grid=geometry.grid,
+                      save=geometry.nt if save else None,
                       time_order=2, space_order=space_order)
-    
-    dv = Function(name="dv", grid=geometry.grid, space_order=0)
 
-    # JKW: this is pretty cool, simultaneously solving for P0 and dP!
-    eqn1 = iso_stencil(P0, b, v, wOverQ, forward="True")
-    eqn2 = iso_stencil(dP, b, v, wOverQ, forward="True", q=2 * b * v**-3 * P0.dt2)
+    dv = Function(name="dv", grid=geometry.grid, space_order=space_order)
 
-    # Construct expression to inject source values, injecting at P0(t+dt)
+    # Time update equations
+    # JKW: this is pretty cool, simultaneously solving for p0 and dp!
+    # The 1st equation is derived in ssa_01_iso_implementation1.ipynb
+    # The 2nd equation is derived in ssa_02_iso_implementation2.ipynb
     t = v.dimensions[0]
-    src_term = src.inject(field=P0.forward, expr=src * t.spacing**2 * v**2 / b)
+    eqn1 = iso_stencil(p0, b, v, wOverQ, forward=True)
+    eqn2 = iso_stencil(dp, b, v, wOverQ, forward=True,
+                       q=2 * b * dv * v**-2 * (wOverQ * p0.dt(x0=t-t.spacing/2) + p0.dt2))
 
-    # Create interpolation expression for receivers, extracting at dP(t)
-    rec_term = rec.interpolate(expr=dP)
+    # Construct expression to inject source values, injecting at p0(t+dt)
+    src_term = src.inject(field=p0.forward, expr=src * t.spacing**2 * v**2 / b)
+
+    # Create interpolation expression for receivers, extracting at dp(t)
+    rec_term = rec.interpolate(expr=dp)
 
     # Substitute spacing terms to reduce flops
     spacing_map = v.grid.spacing_map
-    spacing_map.update({t.spacing : dt})
+    spacing_map.update({t.spacing: dt})
 
     return Operator(eqn1 + src_term + eqn2 + rec_term, subs=spacing_map,
-                    name='JacobianForward', **kwargs)
+                    name='SSA_ISO_JacobianForwardOperator', **kwargs)
 
 
-def JacobianAdjointOperator(b, v, wOverQ, geometry, dt, space_order=8, 
-                            save=True, **kwargs):
+def SSA_ISO_JacobianAdjointOperator(b, v, wOverQ, src, rec, time_axis,
+                                    space_order=8, save=True, **kwargs):
     """
     Construct a linearized JacobianAdjoint modeling operator in a variable density
     visco- acoustic media.
 
     Parameters
     ----------
-    model : Model
-        Object containing the physical parameters.
-    geometry : AcquisitionGeometry
-        Geometry object that contains the source (SparseTimeFunction) and
-        receivers (SparseTimeFunction) and their position.
+    b : Function, required
+        Buoyancy = reciprocal density (units: m^3/kg)
+    v : Function, required
+        Velocity (units: m/msec or km/sec)
+    wOverQ : Function, required
+        The w/Q field for dissipation only attenuation.
+    src : SparseTimeFunction (PointSource)
+        Source position and time signature.
+    rec : SparseTimeFunction (PointSource)
+        Receiver positions and time siganture.
+    time_axis : TimeAxis 
+        Defines temporal sampling
     space_order : int, optional, Defaults to 8
         Space discretization order.
     save : int or Buffer, optional
-        Option to store the entire (unrolled) wavefield.
+        Saving flag, True saves all time steps. False saves three timesteps.
+        Defaults to False.
     """
-    m, damp = model.m, model.damp
 
-    # JacobianAdjoint symbol and wavefield symbols
-    grad = Function(name='grad', grid=model.grid)
-    u = TimeFunction(name='u', grid=model.grid, save=geometry.nt if save
-                     else None, time_order=2, space_order=space_order)
-    v = TimeFunction(name='v', grid=model.grid, save=None,
-                     time_order=2, space_order=space_order)
-    rec = Receiver(name='rec', grid=model.grid, time_range=geometry.time_axis,
+    # Create receiver symbol
+    rec = Receiver(name='rec', grid=geometry.grid, time_range=geometry.time_axis,
                    npoint=geometry.nrec)
 
-    s = model.grid.stepping_dim.spacing
-    eqn = iso_stencil(v, m, s, damp, kernel, forward=False)
+    # Create p0, dp wavefields and dv velocity perturbation field
+    p0 = TimeFunction(name="p0", grid=geometry.grid,
+                      save=geometry.nt if save else None,
+                      time_order=2, space_order=space_order)
 
-    if kernel == 'OT2':
-        gradient_update = Inc(grad, - u.dt2 * v)
-    elif kernel == 'OT4':
-        gradient_update = Inc(grad, - (u.dt2 + s**2 / 12.0 * u.biharmonic(m**(-2))) * v)
-    # Add expression for receiver injection
-    receivers = rec.inject(field=v.backward, expr=rec * s**2 / m)
+    dp = TimeFunction(name="dp", grid=geometry.grid,
+                      save=geometry.nt if save else None,
+                      time_order=2, space_order=space_order)
+
+    dv = Function(name="dv", grid=geometry.grid, space_order=space_order)
+
+    # Time update equation
+    t = v.dimensions[0]
+    eqn = iso_stencil(p0, b, v, wOverQ, forward=False)
+    dv_update = Inc(dv, 2 * b * v**-3 * (wOverQ * p0.dt(x0=t-t.spacing/2) + p0.dt2))
+
+    # Construct expression to inject receiver values, injecting at p(t-dt)
+    rec_term = rec.inject(field=dp.backward, expr=rec * t.spacing**2 * v**2 / b)
 
     # Substitute spacing terms to reduce flops
     spacing_map = v.grid.spacing_map
-    spacing_map.update({t.spacing : dt})
+    spacing_map.update({t.spacing: dt})
 
-    return Operator(eqn + receivers + [gradient_update], subs=model.spacing_map,
-                    name='JacobianAdjoint', **kwargs)
+    return Operator(eqn + rec_term + [dv_update], subs=spacing_map,
+                    name='SSA_ISO_JacobianAdjointOperator', **kwargs)

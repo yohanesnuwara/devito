@@ -1,33 +1,38 @@
 from devito import Function, TimeFunction
 from devito.tools import memoized_meth
 from examples.seismic import PointSource, Receiver
-from examples.seismic.acoustic.operators import (
-    ForwardOperator, AdjointOperator, JacobianAdjointOperator, JacobianForwardOperator
+from examples.seismic.skew_self_adjoint.operators import (
+    ISO_ForwardOperator, ISO_AdjointOperator, 
+    ISO_JacobianForwardOperator, ISO_JacobianAdjointOperator
 )
 from examples.checkpointing.checkpoint import DevitoCheckpoint, CheckpointOperator
 from pyrevolve import Revolver
 
 
-class AcousticWaveSolver(object):
+class SSA_ISO_AcousticWaveSolver(object):
     """
-    Solver object that provides operators for seismic inversion problems
-    and encapsulates the time and space discretization for a given problem
-    setup.
+    Solver object for a scalar isotropic variable density visco- acoustic skew
+    self adjoint wave equation that provides operators for seismic inversion problems
+    and encapsulates the time and space discretization for a given problem setup.
 
     Parameters
     ----------
-    model : Model
-        Physical model with domain parameters.
-    geometry : AcquisitionGeometry
+    b : Function, required
+        Physical model with buoyancy (m^3/kg) 
+    v : Function, required
+        Physical model with velocity (m/msec) 
+    wOverQ : Function, required
+        Physical model with center angular frequency over Q value 
+    geometry : AcquisitionGeometry, required
         Geometry object that contains the source (SparseTimeFunction) and
         receivers (SparseTimeFunction) and their position.
-    kernel : str, optional
-        Type of discretization, centered or shifted.
     space_order: int, optional
-        Order of the spatial stencil discretisation. Defaults to 4.
+        Order of the spatial stencil discretisation. Defaults to 8.
     """
-    def __init__(self, model, geometry, kernel='OT2', space_order=4, **kwargs):
-        self.model = model
+    def __init__(self, b, v, wOverQ, geometry, space_order=8, **kwargs):
+        self.b = b
+        self.v = v
+        self.wOverQ = wOverQ
         self.geometry = geometry
 
         assert self.model == geometry.model
