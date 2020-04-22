@@ -45,6 +45,7 @@ def iso_stencil(field, b, v, wOverQ, **kwargs):
             ((b * field.dx(x0=x+x.spacing/2)).dx(x0=x-x.spacing/2) + \
              (b * field.dz(x0=z+z.spacing/2)).dz(x0=z-z.spacing/2) + q) - \
             t.spacing * wOverQ * (field - field_prev) + 2 * field - field_prev
+
     else:
         t,x,y,z = field.dimensions
         eq_time_update = (t.spacing**2 * v**2 / b) * \
@@ -56,7 +57,8 @@ def iso_stencil(field, b, v, wOverQ, **kwargs):
     return [Eq(field_next, eq_time_update)]
 
 
-def ForwardOperator(model, geometry, space_order=8, save=False, **kwargs):
+def ForwardOperator(b, v, wOverQ, geometry, space_order=8, 
+                    save=False, **kwargs):
     """
     Construct a forward modelling operator in an variable density 
     visco- acoustic media.
@@ -81,7 +83,7 @@ def ForwardOperator(model, geometry, space_order=8, save=False, **kwargs):
     """
 
     # Create symbols for forward wavefield, source and receivers
-    u = TimeFunction(name='u', grid=b.grid,
+    P = TimeFunction(name='P', grid=b.grid,
                      save=geometry.nt if save else None,
                      time_order=2, space_order=space_order)
 
@@ -91,62 +93,72 @@ def ForwardOperator(model, geometry, space_order=8, save=False, **kwargs):
     rec = Receiver(name='rec', grid=geometry.grid, time_range=geometry.time_axis,
                    npoint=geometry.nrec)
 
-    s = model.grid.stepping_dim.spacing
-    eqn = iso_stencil(u, b, v, wOverQ)
+    # time update equation
+    eqn = iso_stencil(P, b, v, wOverQ, forward="True")
 
-    # Construct expression to inject source values
-    src_term = src.inject(field=u.forward, expr=src * s**2 / m)
+    # Construct expression to inject source values, injecting at P(t+dt)
+    t = v.dimensions[0]
+    src_term = src.inject(field=P.forward, expr=src * t.spacing**2 * v**2 / b)
 
-    # Create interpolation expression for receivers
-    rec_term = rec.interpolate(expr=u)
+    # Create interpolation expression for receivers, extracting at P(t)
+    rec_term = rec.interpolate(expr=P)
     
     # Substitute spacing terms to reduce flops
-    return Operator(eqn + src_term + rec_term, subs=model.spacing_map,
+    return Operator(eqn + src_term + rec_term, subs=v.grid.spacing_map,
                     name='Forward', **kwargs)
 
 
-def AdjointOperator(model, geometry, space_order=4,
-                    kernel='OT2', **kwargs):
+def AdjointOperator(b, v, wOverQ, geometry, space_order=8, 
+                    save=False, **kwargs):
     """
-    Construct an adjoint modelling operator in an acoustic media.
+    Construct a forward modelling operator in an variable density 
+    visco- acoustic media.
+    See implementation notebook ssa_01_iso_implementation1.ipynb for more details.
 
     Parameters
     ----------
-    model : Model
-        Object containing the physical parameters.
+    b : Function
+        Buoyancy = reciprocal density (units: m^3/kg) 
+    v : Function
+        Velocity (units: m/msec or km/sec)
+    wOverQ : Function
+        The w/Q field for dissipation only attenuation.
     geometry : AcquisitionGeometry
         Geometry object that contains the source (SparseTimeFunction) and
         receivers (SparseTimeFunction) and their position.
-    space_order : int, optional
+    space_order : int, optional, Defaults to 8
         Space discretization order.
-    kernel : str, optional
-        Type of discretization, centered or shifted.
+    save : int or Buffer, optional
+        Saving flag, True saves all time steps. False saves three timesteps.
+        Defaults to False.
     """
-    m, damp = model.m, model.damp
 
-    v = TimeFunction(name='v', grid=model.grid, save=None,
-                     time_order=2, space_order=space_order)
+    # Create symbols for forward wavefield, source and receivers
+    Ptilde = TimeFunction(name='Ptilde', grid=model.grid, save=None,
+                          time_order=2, space_order=space_order)
+
     srca = PointSource(name='srca', grid=model.grid, time_range=geometry.time_axis,
                        npoint=geometry.nsrc)
+    
     rec = Receiver(name='rec', grid=model.grid, time_range=geometry.time_axis,
                    npoint=geometry.nrec)
 
-    s = model.grid.stepping_dim.spacing
-    eqn = iso_stencil(v, m, s, damp, kernel, forward=False)
+    eqn = iso_stencil(Ptilde, b, v, wOverQ, forward="False")
 
-    # Construct expression to inject receiver values
-    receivers = rec.inject(field=v.backward, expr=rec * s**2 / m)
+    # Construct expression to inject receiver values, injecting at P(t-dt)
+    t = v.dimensions[0]
+    receivers = rec.inject(field=Ptilde.backward, expr=rec * t.spacing**2 * v**2 / b)
 
-    # Create interpolation expression for the adjoint-source
-    source_a = srca.interpolate(expr=v)
+    # Create interpolation expression for the adjoint-source, extracting at P(t)
+    source_a = srca.interpolate(expr=Ptilde)
 
     # Substitute spacing terms to reduce flops
-    return Operator(eqn + receivers + source_a, subs=model.spacing_map,
+    return Operator(eqn + receivers + source_a, subs=v.grid.spacing_map,
                     name='Adjoint', **kwargs)
 
 
-def JacobianAdjointOperator(model, geometry, space_order=4, save=True,
-                     kernel='OT2', **kwargs):
+def JacobianAdjointOperator(b, v, wOverQ, geometry, space_order=8, 
+                            save=True, **kwargs):
     """
     Construct a gradient operator in an acoustic media.
 
@@ -190,8 +202,7 @@ def JacobianAdjointOperator(model, geometry, space_order=4, save=True,
                     name='JacobianAdjoint', **kwargs)
 
 
-def JacobianForwardOperator(model, geometry, space_order=4,
-                 kernel='OT2', **kwargs):
+def JacobianForwardOperator(b, v, wOverQ, geometry, space_order=8, **kwargs):
     """
     Construct an Linearized JacobianForward operator in an acoustic media.
 

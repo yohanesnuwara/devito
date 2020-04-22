@@ -44,4 +44,4 @@ These notebooks first implement and then test for correctness for three types of
 
 ## Running unit tests
 - if you would like to see stdout when running the tests, use
-```py.test -c testUtils.py```
+```py.test -s testUtils.py```

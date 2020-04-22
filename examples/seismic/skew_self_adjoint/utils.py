@@ -3,6 +3,21 @@ import numpy as np
 from devito.builtins import gaussian_smooth
 
 
+def critical_dt(v):
+    """
+    Determine the temporal sampling to satisfy CFL stability.
+    This method replicates the functionality in the Model class.
+
+    Parameters
+    ----------
+    v : Function
+        velocity
+    """
+    coeff = 0.38 if len(v.grid.shape) == 3 else 0.42
+    dt = v.dtype(coeff * np.min(v.grid.spacing) / (np.max(v.data)))
+    return v.dtype("%.5e" % dt)
+
+
 def setup_wOverQ(wOverQ, w, qmin, qmax, npad, sigma=None):
     """
     Initialise spatially variable w/Q field used to implement attenuation and
