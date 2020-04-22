@@ -73,8 +73,8 @@ class AcousticWaveSolver(object):
 
     def forward(self, src=None, rec=None, u=None, vp=None, save=None, **kwargs):
         """
-        Forward modelling function that creates the necessary
-        data objects for running a forward modelling operator.
+        Forward modeling function that creates the necessary
+        data objects for running a forward modeling operator.
 
         Parameters
         ----------
@@ -115,8 +115,8 @@ class AcousticWaveSolver(object):
 
     def adjoint(self, rec, srca=None, v=None, vp=None, **kwargs):
         """
-        Adjoint modelling function that creates the necessary
-        data objects for running an adjoint modelling operator.
+        Adjoint modeling function that creates the necessary
+        data objects for running an adjoint modeling operator.
 
         Parameters
         ----------
@@ -154,8 +154,8 @@ class AcousticWaveSolver(object):
 
     def jacobian_forward(self, rec, u, v=None, grad=None, vp=None, checkpointing=False, **kwargs):
         """
-        JacobianAdjoint modelling function for computing the adjoint of the
-        Linearized JacobianForward modelling function, ie. the action of the
+        JacobianAdjoint modeling function for computing the adjoint of the
+        Linearized JacobianForward modeling function, ie. the action of the
         Jacobian adjoint on an input data.
 
         Parameters
@@ -207,8 +207,8 @@ class AcousticWaveSolver(object):
 
     def jacobian_forward(self, dmin, src=None, rec=None, u=None, U=None, vp=None, **kwargs):
         """
-        Linearized JacobianForward modelling function that creates the necessary
-        data objects for running an adjoint modelling operator.
+        Linearized JacobianForward modeling function that creates the necessary
+        data objects for running an adjoint modeling operator.
 
         Parameters
         ----------
