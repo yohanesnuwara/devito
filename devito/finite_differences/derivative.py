@@ -285,8 +285,25 @@ class Derivative(sympy.Derivative, Differentiable):
         # types of discretizations.
         return self._eval_fd(self.expr)
 
+    @property
+    def _eval_deriv(self):
+        return self._eval_fd(self.expr)
+
     def _eval_fd(self, expr):
-        expr = expr if expr.is_Mul else getattr(expr, 'evaluate', expr)
+        """
+        valuate finite difference approximation of the Derivative.
+        The evaluation goes in four steps:
+        - 1: evaluate derivatives within the expression. For example `f.dx * g` will
+        evaluate `f.dx` first.
+        - 2: Evaluate the finite difference for the (new) expression
+        - 3: Evaluate remaining (as `g` may need to be evaluated at a different point)
+        - 4: apply subsititutions.
+
+        """
+        # Evaluate derivatives in the expression
+        was_mul = expr.is_Mul
+        expr = getattr(expr, '_eval_deriv', expr)
+        # Evaluate FD of the new expressiob
         if self.side is not None and self.deriv_order == 1:
             res = first_derivative(expr, self.dims[0], self.fd_order,
                                    side=self.side, matvec=self.transpose,
@@ -297,8 +314,10 @@ class Derivative(sympy.Derivative, Differentiable):
         else:
             res = generic_derivative(expr, *self.dims, self.fd_order, self.deriv_order,
                                      matvec=self.transpose, x0=self.x0)
-        if expr.is_Mul:
+        # Evaluate remaining part of expression
+        if was_mul:
             res = res.evaluate
+        # Apply substitution
         for e in self._subs:
             res = res.xreplace(e)
         return res

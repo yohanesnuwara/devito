@@ -117,6 +117,10 @@ class Differentiable(sympy.Expr, Evaluable):
             return self
         return self.func(*[getattr(a, '_eval_at', lambda x: a)(func) for a in self.args])
 
+    @property
+    def _eval_deriv(self):
+        return self.func(*[getattr(a, '_eval_deriv', a) for a in self.args])
+
     def __hash__(self):
         return super(Differentiable, self).__hash__()
 
@@ -318,14 +322,17 @@ class Mul(DifferentiableOp, sympy.Mul):
             - staggered
         So for example f(x)*g(x + h_x/2) => .5*(f(x) + f(x + h_x))*g(x + h_x/2)
         """
+
         if len(set(f.staggered for f in self._args_diff)) == 1:
             return self
 
         def stagg_prio(func):
-            if func._is_parameter or func.staggered is None:
+            if func.staggered is None:
                 return 0
             elif func.staggered in self.dimensions:
                 return 2
+            elif getattr(func, 'is_Derivative', False):
+                return 3
             else:
                 return 1
 
