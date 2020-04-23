@@ -197,8 +197,9 @@ class Derivative(sympy.Derivative, Differentiable):
         _kwargs = {'deriv_order': self.deriv_order, 'fd_order': self.fd_order,
                    'side': self.side, 'transpose': self.transpose, 'subs': self._subs,
                    'x0': self.x0, 'preprocessed': True}
+        expr = kwargs.pop('expr', self.expr)
         _kwargs.update(**kwargs)
-        return Derivative(self.expr, *self.dims, **_kwargs)
+        return Derivative(expr, *self.dims, **_kwargs)
 
     def subs(self, *args, **kwargs):
         """
@@ -267,7 +268,14 @@ class Derivative(sympy.Derivative, Differentiable):
         setup where one could have Eq(u(x + h_x/2), v(x).dx)) in which case v(x).dx
         has to be computed at x=x + h_x/2.
         """
-        x0 = dict(zip(func.dimensions, func.indices_ref))
+        # Split the Add case to handle different staggereing
+        x0 = dict(func.indices_ref._getters)
+        if self.expr.is_Add:
+            args = [self._new_from_self(expr=a, x0=x0) for a in self.expr._args_diff]
+            args += [a for a in self.expr.args if a not in self.expr._args_diff]
+            return self.expr.func(*args)
+        elif self.expr.is_Mul:
+            return self._new_from_self(x0=x0, expr=self.expr._gather_for_diff)
         return self._new_from_self(x0=x0)
 
     @property
@@ -278,7 +286,7 @@ class Derivative(sympy.Derivative, Differentiable):
         return self._eval_fd(self.expr)
 
     def _eval_fd(self, expr):
-        expr = getattr(expr, 'evaluate', expr)
+        expr = expr if expr.is_Mul else getattr(expr, 'evaluate', expr)
         if self.side is not None and self.deriv_order == 1:
             res = first_derivative(expr, self.dims[0], self.fd_order,
                                    side=self.side, matvec=self.transpose,
@@ -289,6 +297,8 @@ class Derivative(sympy.Derivative, Differentiable):
         else:
             res = generic_derivative(expr, *self.dims, self.fd_order, self.deriv_order,
                                      matvec=self.transpose, x0=self.x0)
+        if expr.is_Mul:
+            res = res.evaluate
         for e in self._subs:
             res = res.xreplace(e)
         return res
