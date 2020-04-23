@@ -1,8 +1,9 @@
+# TODO figure out if can get time sampling from the SparseTimeFuntions src/rec
+# TODO replace the conditional logic in the stencil with comprehension
 from devito import Eq, Operator, Function, TimeFunction, Inc
-from examples.seismic import PointSource, Receiver
 
 
-def iso_stencil(field, b, v, wOverQ, **kwargs):
+def iso_stencil(field, model, **kwargs):
     """
     Stencil for the scalar isotropic visco- acoustic variable density
     skew self adjoint wave equation:
@@ -16,17 +17,22 @@ def iso_stencil(field, b, v, wOverQ, **kwargs):
     ----------
     field : TimeFunction, required
         The pressure wavefield computed solution.
-    b : Function, required
-        Buoyancy = reciprocal density (units: m^3/kg)
-    v : Function, required
-        Velocity (units: m/msec or km/sec)
-    wOverQ : Function, required
-        The w/Q field for dissipation only attenuation.
+    model : Dictionary <string>:<Function>, contains:
+        'b': Buoyancy = reciprocal density (units: m^3/kg)
+        'v': Velocity (units: m/msec or km/sec)
+        'wOverQ': The w/Q field for dissipation only attenuation.
     forward : bool, optional
         The propagation direction. Defaults to True.
     q : TimeFunction, Function or float, optional
         Full-space/time source of the wave-equation.
     """
+    # Get the Functions for buoyancy, velocity, and wOverQ
+    assert 'b' in model, "model dictionary must contain key 'b'"
+    assert 'v' in model, "model dictionary must contain key 'b'"
+    assert 'wOverQ' in model, "model dictionary must contain key 'wOverQ'"
+    b = model['b']
+    v = model['v']
+    wOverQ = model['wOverQ']
 
     # Define time step of pressure wavefield to be updated
     field_next = field.forward if kwargs.get('forward', True) else field.backward
@@ -36,7 +42,7 @@ def iso_stencil(field, b, v, wOverQ, **kwargs):
     q = kwargs.get('q', 0)
 
     # Define the time update equation for 2d/3d
-    # TODO: consider replacing conditional logic with
+    # TODO: consider replacing conditional logic with @mloubout's comprehension
     # space_fd = sum([getattr(b * getattr(field, 'd%s'%d.name)(x0=d+d.spacing/2)),
     #            'd%s'%d.name)(x0=d-d.spacing/2)) for d in field.dimensions[1:]])
     if len(field.data.shape) == 3:
@@ -57,25 +63,23 @@ def iso_stencil(field, b, v, wOverQ, **kwargs):
     return [Eq(field_next, eq_time_update)]
 
 
-def SSA_ISO_ForwardOperator(b, v, wOverQ, src, rec, time_axis, 
-                            space_order=8, save=False, **kwargs):
+def SSA_ISO_ForwardOperator(model, src, rec, time_axis, space_order=8,
+                            save=False, **kwargs):
     """
     Construct a forward modeling operator in a variable density visco- acoustic media.
     See implementation notebook ssa_01_iso_implementation1.ipynb for more details.
 
     Parameters
     ----------
-    b : Function, required
-        Buoyancy = reciprocal density (units: m^3/kg)
-    v : Function, required
-        Velocity (units: m/msec or km/sec)
-    wOverQ : Function, required
-        The w/Q field for dissipation only attenuation.
+    model : Dictionary <string>:<Function>, contains:
+        'b': Buoyancy = reciprocal density (units: m^3/kg)
+        'v': Velocity (units: m/msec or km/sec)
+        'wOverQ': The w/Q field for dissipation only attenuation.
     src : SparseTimeFunction (PointSource)
         Source position and time signature.
     rec : SparseTimeFunction (PointSource)
         Receiver positions and time siganture.
-    time_axis : TimeAxis 
+    time_axis : TimeAxis
         Defines temporal sampling
     space_order : int, optional, Defaults to 8
         Space discretization order.
@@ -83,6 +87,13 @@ def SSA_ISO_ForwardOperator(b, v, wOverQ, src, rec, time_axis,
         Saving flag, True saves all time steps. False saves three timesteps.
         Defaults to False.
     """
+    # Get the Functions for buoyancy, velocity, and wOverQ
+    assert 'b' in model, "model dictionary must contain key 'b'"
+    assert 'v' in model, "model dictionary must contain key 'b'"
+    assert 'wOverQ' in model, "model dictionary must contain key 'wOverQ'"
+    b = model['b']
+    v = model['v']
+    wOverQ = model['wOverQ']
 
     # Create symbols for wavefield, source and receivers
     p = TimeFunction(name='p', grid=v.grid,
@@ -108,8 +119,8 @@ def SSA_ISO_ForwardOperator(b, v, wOverQ, src, rec, time_axis,
                     name='SSA_ISO_ForwardOperator', **kwargs)
 
 
-def SSA_ISO_AdjointOperator(b, v, wOverQ, src, rec, time_axis
-                            space_order=8, save=False, **kwargs):
+def SSA_ISO_AdjointOperator(model, src, rec, time_axis, space_order=8,
+                            save=False, **kwargs):
     """
     Construct a adjoint modeling operator in a variable density visco- acoustic media.
     Note the FD evolution will be time reversed.
@@ -117,17 +128,15 @@ def SSA_ISO_AdjointOperator(b, v, wOverQ, src, rec, time_axis
 
     Parameters
     ----------
-    b : Function, required
-        Buoyancy = reciprocal density (units: m^3/kg)
-    v : Function, required
-        Velocity (units: m/msec or km/sec)
-    wOverQ : Function, required
-        The w/Q field for dissipation only attenuation.
+    model : Dictionary <string>:<Function>, contains:
+        'b': Buoyancy = reciprocal density (units: m^3/kg)
+        'v': Velocity (units: m/msec or km/sec)
+        'wOverQ': The w/Q field for dissipation only attenuation.
     src : SparseTimeFunction (PointSource)
         Source position and time signature.
     rec : SparseTimeFunction (PointSource)
         Receiver positions and time siganture.
-    time_axis : TimeAxis 
+    time_axis : TimeAxis
         Defines temporal sampling
     space_order : int, optional, Defaults to 8
         Space discretization order.
@@ -135,55 +144,55 @@ def SSA_ISO_AdjointOperator(b, v, wOverQ, src, rec, time_axis
         Saving flag, True saves all time steps. False saves three timesteps.
         Defaults to False.
     """
+    # Get the Functions for buoyancy, velocity, and wOverQ
+    assert 'b' in model, "model dictionary must contain key 'b'"
+    assert 'v' in model, "model dictionary must contain key 'b'"
+    assert 'wOverQ' in model, "model dictionary must contain key 'wOverQ'"
+    b = model['b']
+    v = model['v']
+    wOverQ = model['wOverQ']
 
     # Create symbols for wavefield, source and receivers
-    p = TimeFunction(name='p', grid=geometry.grid,
-                          save=geometry.nt if save else None,
-                          time_order=2, space_order=space_order)
-
-    srca = PointSource(name='srca', grid=geometry.grid, time_range=geometry.time_axis,
-                       npoint=geometry.nsrc)
-
-    rec = Receiver(name='rec', grid=geometry.grid, time_range=geometry.time_axis,
-                   npoint=geometry.nrec)
+    p = TimeFunction(name='p', grid=v.grid,
+                     save=time_axis.num if save else None,
+                     time_order=2, space_order=space_order)
 
     # Time update equation
     eqn = iso_stencil(p, b, v, wOverQ, forward="False")
 
     # Construct expression to inject receiver values, injecting at p(t-dt)
     t = v.dimensions[0]
-    receivers = rec.inject(field=p.backward, expr=rec * t.spacing**2 * v**2 / b)
+    rec_term = rec.inject(field=p.backward, expr=rec * t.spacing**2 * v**2 / b)
 
     # Create interpolation expression for the adjoint-source, extracting at p(t)
-    source_a = srca.interpolate(expr=p)
+    src_term = src.interpolate(expr=p)
 
     # Substitute spacing terms to reduce flops
+    dt = time_axis.step
     spacing_map = v.grid.spacing_map
     spacing_map.update({t.spacing: dt})
 
-    return Operator(eqn + receivers + source_a, subs=spacing_map,
+    return Operator(eqn + rec_term + src_term, subs=spacing_map,
                     name='SSA_ISO_AdjointOperator', **kwargs)
 
 
-def SSA_ISO_JacobianForwardOperator(b, v, wOverQ, src, rec, time_axis,
-                                    space_order=8, save=False, **kwargs):
+def SSA_ISO_JacobianForwardOperator(model, src, rec, time_axis, space_order=8,
+                                    save=False, **kwargs):
     """
     Construct a linearized JacobianForward modeling operator in a variable density
     visco- acoustic media.
 
     Parameters
     ----------
-    b : Function, required
-        Buoyancy = reciprocal density (units: m^3/kg)
-    v : Function, required
-        Velocity (units: m/msec or km/sec)
-    wOverQ : Function, required
-        The w/Q field for dissipation only attenuation.
+    model : Dictionary <string>:<Function>, contains:
+        'b': Buoyancy = reciprocal density (units: m^3/kg)
+        'v': Velocity (units: m/msec or km/sec)
+        'wOverQ': The w/Q field for dissipation only attenuation.
     src : SparseTimeFunction (PointSource)
         Source position and time signature.
     rec : SparseTimeFunction (PointSource)
         Receiver positions and time siganture.
-    time_axis : TimeAxis 
+    time_axis : TimeAxis
         Defines temporal sampling
     space_order : int, optional, Defaults to 8
         Space discretization order.
@@ -191,24 +200,24 @@ def SSA_ISO_JacobianForwardOperator(b, v, wOverQ, src, rec, time_axis,
         Saving flag, True saves all time steps. False saves three timesteps.
         Defaults to False.
     """
-
-    # Create source and receiver symbols
-    src = Receiver(name='src', grid=geometry.grid, time_range=geometry.time_axis,
-                   npoint=geometry.nsrc)
-
-    rec = Receiver(name='rec', grid=geometry.grid, time_range=geometry.time_axis,
-                   npoint=geometry.nrec)
+    # Get the Functions for buoyancy, velocity, and wOverQ
+    assert 'b' in model, "model dictionary must contain key 'b'"
+    assert 'v' in model, "model dictionary must contain key 'b'"
+    assert 'wOverQ' in model, "model dictionary must contain key 'wOverQ'"
+    b = model['b']
+    v = model['v']
+    wOverQ = model['wOverQ']
 
     # Create p0, dp wavefields and dv velocity perturbation field
-    p0 = TimeFunction(name="p0", grid=geometry.grid,
-                      save=geometry.nt if save else None,
+    p0 = TimeFunction(name="p0", grid=v.grid,
+                      save=time_axis.num if save else None,
                       time_order=2, space_order=space_order)
 
-    dp = TimeFunction(name="dp", grid=geometry.grid,
-                      save=geometry.nt if save else None,
+    dp = TimeFunction(name="dp", grid=v.grid,
+                      save=time_axis.num if save else None,
                       time_order=2, space_order=space_order)
 
-    dv = Function(name="dv", grid=geometry.grid, space_order=space_order)
+    dv = Function(name="dv", grid=v.grid, space_order=space_order)
 
     # Time update equations
     # JKW: this is pretty cool, simultaneously solving for p0 and dp!
@@ -226,6 +235,7 @@ def SSA_ISO_JacobianForwardOperator(b, v, wOverQ, src, rec, time_axis,
     rec_term = rec.interpolate(expr=dp)
 
     # Substitute spacing terms to reduce flops
+    dt = time_axis.step
     spacing_map = v.grid.spacing_map
     spacing_map.update({t.spacing: dt})
 
@@ -233,25 +243,23 @@ def SSA_ISO_JacobianForwardOperator(b, v, wOverQ, src, rec, time_axis,
                     name='SSA_ISO_JacobianForwardOperator', **kwargs)
 
 
-def SSA_ISO_JacobianAdjointOperator(b, v, wOverQ, src, rec, time_axis,
-                                    space_order=8, save=True, **kwargs):
+def SSA_ISO_JacobianAdjointOperator(model, src, rec, time_axis, space_order=8,
+                                    save=True, **kwargs):
     """
     Construct a linearized JacobianAdjoint modeling operator in a variable density
     visco- acoustic media.
 
     Parameters
     ----------
-    b : Function, required
-        Buoyancy = reciprocal density (units: m^3/kg)
-    v : Function, required
-        Velocity (units: m/msec or km/sec)
-    wOverQ : Function, required
-        The w/Q field for dissipation only attenuation.
+    model : Dictionary <string>:<Function>, contains:
+        'b': Buoyancy = reciprocal density (units: m^3/kg)
+        'v': Velocity (units: m/msec or km/sec)
+        'wOverQ': The w/Q field for dissipation only attenuation.
     src : SparseTimeFunction (PointSource)
         Source position and time signature.
     rec : SparseTimeFunction (PointSource)
         Receiver positions and time siganture.
-    time_axis : TimeAxis 
+    time_axis : TimeAxis
         Defines temporal sampling
     space_order : int, optional, Defaults to 8
         Space discretization order.
@@ -259,21 +267,24 @@ def SSA_ISO_JacobianAdjointOperator(b, v, wOverQ, src, rec, time_axis,
         Saving flag, True saves all time steps. False saves three timesteps.
         Defaults to False.
     """
-
-    # Create receiver symbol
-    rec = Receiver(name='rec', grid=geometry.grid, time_range=geometry.time_axis,
-                   npoint=geometry.nrec)
+    # Get the Functions for buoyancy, velocity, and wOverQ
+    assert 'b' in model, "model dictionary must contain key 'b'"
+    assert 'v' in model, "model dictionary must contain key 'b'"
+    assert 'wOverQ' in model, "model dictionary must contain key 'wOverQ'"
+    b = model['b']
+    v = model['v']
+    wOverQ = model['wOverQ']
 
     # Create p0, dp wavefields and dv velocity perturbation field
-    p0 = TimeFunction(name="p0", grid=geometry.grid,
-                      save=geometry.nt if save else None,
+    p0 = TimeFunction(name="p0", grid=v.grid,
+                      save=time_axis.num if save else None,
                       time_order=2, space_order=space_order)
 
-    dp = TimeFunction(name="dp", grid=geometry.grid,
-                      save=geometry.nt if save else None,
+    dp = TimeFunction(name="dp", grid=v.grid,
+                      save=time_axis.num if save else None,
                       time_order=2, space_order=space_order)
 
-    dv = Function(name="dv", grid=geometry.grid, space_order=space_order)
+    dv = Function(name="dv", grid=v.grid, space_order=space_order)
 
     # Time update equation
     t = v.dimensions[0]
@@ -284,6 +295,7 @@ def SSA_ISO_JacobianAdjointOperator(b, v, wOverQ, src, rec, time_axis,
     rec_term = rec.inject(field=dp.backward, expr=rec * t.spacing**2 * v**2 / b)
 
     # Substitute spacing terms to reduce flops
+    dt = time_axis.step
     spacing_map = v.grid.spacing_map
     spacing_map.update({t.spacing: dt})
 

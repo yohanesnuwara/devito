@@ -45,3 +45,11 @@ These notebooks first implement and then test for correctness for three types of
 ## Running unit tests
 - if you would like to see stdout when running the tests, use
 ```py.test -s testUtils.py```
+
+## TODO
+1. figure out if the JacobianAdjointOperator completely solves p0 first
+1. figure out if can get time sampling from the SparseTimeFuntions src/rec
+1. replace the conditional logic in the stencil with comprehension
+1. s --> q in all equations
+1. p --> u in all equations
+1. \Gamma --> P_r,P_s
