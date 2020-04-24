@@ -1,14 +1,8 @@
-from copy import copy
 from devito import Function, TimeFunction
 from devito.tools import memoized_meth
 from examples.seismic import PointSource, Receiver
-from examples.seismic.skew_self_adjoint.operators import (
-    SSA_ISO_ForwardOperator, SSA_ISO_AdjointOperator,
-    SSA_ISO_JacobianForwardOperator, SSA_ISO_JacobianAdjointOperator
-)
-from examples.checkpointing.checkpoint import DevitoCheckpoint, CheckpointOperator
-from examples.seismic.skew_self_adjoint import utils.*
-from pyrevolve import Revolver
+from examples.seismic.skew_self_adjoint.utils import *
+from examples.seismic.skew_self_adjoint.operators import *
 
 
 class SSA_ISO_AcousticWaveSolver(object):
@@ -43,11 +37,13 @@ class SSA_ISO_AcousticWaveSolver(object):
     space_order: int, optional
         Order of the spatial stencil discretisation. Defaults to 8.
     """
-    def __init__(self, npad, qmin, qmax, b, v, src, rec, time_axis,
+
+    def __init__(self, npad, qmin, qmax, omega, b, v, src, rec, time_axis,
                  space_order=8, **kwargs):
         self.npad = npad
         self.qmin = qmin
         self.qmax = qmax
+        self.omega = omega
         self.b = b
         self.v = v
         self.src = src
@@ -65,51 +61,53 @@ class SSA_ISO_AcousticWaveSolver(object):
         wOverQ = Function(name='wOverQ', grid=v.grid, space_order=v.space_order)
         setup_wOverQ(wOverQ, omega, qmin, qmax, npad)
         self.wOverQ = wOverQ
-        
+
+        # initialize dictionary to store model parameters
+        self.model = { 'b': b, 'v': v, 'wOverQ': wOverQ }
+
     # Note on use of memoized op_fwd, op_adj, op_jacobian_fwd, op_jacobian_adj:
     #   For repeated calls these functions only do the heavy lifting of building the
-    #   Devito Operator if something 'impactful' changes in the symbolic representation. 
-
+    #   Devito Operator if something 'impactful' changes in the symbolic representation.
     @memoized_meth
     def op_fwd(self, save=None):
         """Cached operator for forward runs with buffered wavefield"""
-        return ForwardOperator(self.model, self.src, self.rec,
+        return ISO_FwdOperator(self.model, self.src, self.rec,
                                self.time_axis, space_order=self.space_order,
                                save=save, **self._kwargs)
 
     @memoized_meth
     def op_adj(self):
-        """Cached operator for AdjointOperator runs"""
-        return AdjointOperator(self.model, self.src, self.rec,
+        """Cached operator for AdjOperator runs"""
+        return ISO_AdjOperator(self.model, self.src, self.rec,
                                self.time_axis, space_order=self.space_order,
                                save=None, **self._kwargs)
 
     @memoized_meth
     def op_jacobian_fwd(self):
         """Cached operator for JacobianForward runs"""
-        return JacobianForwardOperator(self.model, self.src, self.rec,
+        return ISO_JacobianFwdOperator(self.model, self.src, self.rec,
                                        self.time_axis, space_order=self.space_order,
                                        save=None, **self._kwargs)
 
     @memoized_meth
     def op_jacobian_adj(self, save=True):
         """Cached operator for JacobianAdjoint runs"""
-        return JacobianAdjointOperator(self.model, self.src, self.rec,
+        return ISO_JacobianAdjOperator(self.model, self.rec,
                                        self.time_axis, space_order=self.space_order,
                                        save=save, **self._kwargs)
 
-    
-    def forward(self, src=None, rec=None, b=None, v=None, wOverQ=None, u=None, 
+    def forward(self, src=None, rec=None, b=None, v=None, wOverQ=None, u=None,
                 save=None, **kwargs):
         """
         Forward modeling function that creates the necessary
         data objects for running a forward modeling operator.
+        No required parameters.
 
         Parameters
         ----------
         src : SparseTimeFunction, optional, defaults to src at construction
             Time series data for the injected source term.
-        rec : SparseTimeFunction, optional, defaults to rec at construction
+        rec : SparseTimeFunction, optional, defaults to new rec
             The interpolated receiver data.
         b : Function or float, optional, defaults to b at construction
             The time-constant buoyancy.
@@ -117,24 +115,24 @@ class SSA_ISO_AcousticWaveSolver(object):
             The time-constant velocity.
         wOverQ : Function or float, optional, defaults to wOverQ at construction
             The time-constant dissipation only attenuation w/Q field.
-        u : TimeFunction, optional
+        u : Function or float, optional, defaults to new TimeFunction
             Stores the computed wavefield.
         save : int or Buffer, optional
             The entire (unrolled) wavefield.
 
         Returns
-        -------
-        Receiver time series data, wavefield TimeFunction u, and performance summary
+        ----------
+        Receiver time series data, TimeFunction wavefield u, and performance summary
         """
-        # Get src. src cant change, use self.src if not passed
+        # Get src: src cant change, use self.src if not passed
         src = src or self.src
-        
-        # Get rec. rec can change, create new if not passed
-        rec = rec or Receiver(name='rec', grid=self.v.grid, 
-                              time_range=self.time_axis, 
+
+        # Get rec: rec can change, create new if not passed
+        rec = rec or Receiver(name='rec', grid=self.v.grid,
+                              time_range=self.time_axis,
                               coordinates=self.rec.coordinates)
 
-        # Get (b, v, wOverQ) from passed arguments or from (b, v, wOverQ) at construction 
+        # Get (b, v, wOverQ) from passed arguments or from (b, v, wOverQ) at construction
         b = b or self.b
         v = v or self.v
         wOverQ = wOverQ or self.wOverQ
@@ -143,29 +141,85 @@ class SSA_ISO_AcousticWaveSolver(object):
         assert src.grid == rec.grid == b.grid == v.grid == wOverQ.grid
 
         # Make dictionary of the physical model properties
-        model = { 'b': b, 'v': v, 'wOverQ': wOverQ }
-        
+        self.model.update(b=b, v=v, wOverQ=wOverQ)
+
         # Create the wavefield if not provided
-        p = p or TimeFunction(name='u', grid=self.v.grid,
+        u = u or TimeFunction(name='u', grid=self.v.grid,
                               save=self.time_axis.num if save else None,
                               time_order=2, space_order=self.space_order)
 
-        # Execute operator 
-        summary = self.op_fwd(save).apply(model=model, src=src, rec=rec, u=u, **kwargs)
+        # Execute operator, "splatting" the model dictionary entries
+        summary = self.op_fwd(save).apply(**self.model, src=src, rec=rec, u=u, **kwargs)
         return rec, u, summary
 
-    
-    def adjoint(self, src=None, rec=None, b=None, v=None, wOverQ=None, u=None, 
+    def adjoint(self, rec, srca=None, b=None, v=None, wOverQ=None, ua=None,
                 save=None, **kwargs):
         """
         Adjoint modeling function that creates the necessary
         data objects for running a adjoint modeling operator.
+        Required parameters: rec.
 
         Parameters
         ----------
+        rec : SparseTimeFunction, required
+            The interpolated receiver data to be injected
+        srca : SparseTimeFunction, optional, defaults to new srca
+            Time series data for the adjoint source term.
+        b : Function or float, optional, defaults to b at construction
+            The time-constant buoyancy.
+        v : Function or float, optional, defaults to v at construction
+            The time-constant velocity.
+        wOverQ : Function or float, optional, defaults to wOverQ at construction
+            The time-constant dissipation only attenuation w/Q field.
+        ua : Function or float, optional, defaults to new TimeFunction
+            Stores the computed adjoint wavefield.
+        save : int or Buffer, optional
+            The entire (unrolled) wavefield.
+
+        Returns
+        ----------
+        Adjoint source time series data, wavefield TimeFunction ua,
+        and performance summary
+        """
+        # Get src: src can change, create new if not passed
+        srca = srca or PointSource(name='srca', grid=self.v.grid,
+                                   time_range=self.time_axis,
+                                   coordinates=self.src.coordinates)
+
+        # Get (b, v, wOverQ) from passed arguments or from (b, v, wOverQ) at construction
+        b = b or self.b
+        v = v or self.v
+        wOverQ = wOverQ or self.wOverQ
+
+        # ensure srca, rec, b, v, wOverQ all share the same underlying grid
+        assert srca.grid == rec.grid == b.grid == v.grid == wOverQ.grid
+
+        # Make dictionary of the physical model properties
+        self.model.update(b=b, v=v, wOverQ=wOverQ)
+
+        # Create the adjoint wavefield if not provided
+        ua = ua or TimeFunction(name='ua', grid=self.v.grid,
+                                save=self.time_axis.num if save else None,
+                                time_order=2, space_order=self.space_order)
+
+        # Execute operator, "splatting" the model dictionary entries
+        summary = self.op_adj().apply(**self.model, srca=srca, rec=rec, u=ua, **kwargs)
+        return srca, ua, summary
+
+    def jacobian_forward(self, dm, src=None, rec=None, b=None, v=None, wOverQ=None,
+                         u0=None, du=None, save=None, **kwargs):
+        """
+        Linearized JacobianForward modeling function that creates the necessary
+        data objects for running a Jacobian forward modeling operator.
+        Required parameters: dm.
+
+        Parameters
+        ----------
+        dm : Function or float, required
+            The perturbation to the velocity model.
         src : SparseTimeFunction, optional, defaults to src at construction
             Time series data for the injected source term.
-        rec : SparseTimeFunction, optional, defaults to rec at construction
+        rec : SparseTimeFunction, optional, defaults to new rec
             The interpolated receiver data.
         b : Function or float, optional, defaults to b at construction
             The time-constant buoyancy.
@@ -173,24 +227,27 @@ class SSA_ISO_AcousticWaveSolver(object):
             The time-constant velocity.
         wOverQ : Function or float, optional, defaults to wOverQ at construction
             The time-constant dissipation only attenuation w/Q field.
-        u : TimeFunction, optional
-            Stores the computed wavefield.
+        u0 : Function or float, optional, defaults to new TimeFunction
+            Stores the computed background wavefield.
+        du : Function or float, optional, defaults to new TimeFunction
+            Stores the computed perturbed wavefield.
         save : int or Buffer, optional
             The entire (unrolled) wavefield.
 
         Returns
-        -------
-        Adjoint source time series data, wavefield TimeFunction u, and performance summary
+        ----------
+        Receiver time series data rec, TimeFunction background wavefield u0,
+        TimeFunction perturbation wavefield du, and performance summary
         """
-        # Get src. src can change, create new if not passed
-        src = src or PointSource(name='src', grid=self.model.grid,
-                                 time_range=self.time_axis,
-                                 coordinates=self.src.coordinates)
-        
-        # Get rec. rec cant change, can use self.srec if not passed
-        rec = rec or self.rec
+        # Get src: src cant change, use self.src if not passed
+        src = src or self.src
 
-        # Get (b, v, wOverQ) from passed arguments or from (b, v, wOverQ) at construction 
+        # Get rec: rec can change, create new if not passed
+        rec = rec or Receiver(name='rec', grid=self.v.grid,
+                              time_range=self.time_axis,
+                              coordinates=self.rec.coordinates)
+
+        # Get (b, v, wOverQ) from passed arguments or from (b, v, wOverQ) at construction
         b = b or self.b
         v = v or self.v
         wOverQ = wOverQ or self.wOverQ
@@ -199,110 +256,76 @@ class SSA_ISO_AcousticWaveSolver(object):
         assert src.grid == rec.grid == b.grid == v.grid == wOverQ.grid
 
         # Make dictionary of the physical model properties
-        model = { 'b': b, 'v': v, 'wOverQ': wOverQ }
-        
-        # Create the adjoint wavefield if not provided
-        v = v or TimeFunction(name='v', grid=self.model.grid,
-                              time_order=2, space_order=self.space_order)
+        self.model.update(b=b, v=v, wOverQ=wOverQ)
 
-        # Pick vp from model unless explicitly provided
-        vp = vp or self.model.vp
+        # Create the wavefields if not provided
+        u0 = u0 or TimeFunction(name='u0', grid=self.v.grid,
+                                save=self.time_axis.num if save else None,
+                                time_order=2, space_order=self.space_order)
 
-        # Execute operator and return wavefield and receiver data
-        summary = self.op_adj().apply(srca=srca, rec=rec, v=v, vp=vp,
-                                      dt=kwargs.pop('dt', self.dt), **kwargs)
-        return srca, v, summary
+        du = du or TimeFunction(name='du', grid=self.v.grid,
+                                save=self.time_axis.num if save else None,
+                                time_order=2, space_order=self.space_order)
 
-    
-    def jacobian_forward(self, dmin, src=None, rec=None, u=None, U=None, vp=None, **kwargs):
+        # Execute operator, "splatting" the model dictionary entries
+        summary = self.op_jacobian_fwd().apply(dm=dm, **self.model, src=src, rec=rec,
+                                                    u0=u0, du=du, **kwargs)
+        return rec, u0, du, summary
+
+    def jacobian_adjoint(self, rec, u0, b=None, v=None, wOverQ=None,
+                         dm=None, du=None, save=None, **kwargs):
         """
         Linearized JacobianForward modeling function that creates the necessary
-        data objects for running an adjoint modeling operator.
+        data objects for running a Jacobian forward modeling operator.
+        Required parameters: rec, u0.
 
         Parameters
         ----------
-        src : SparseTimeFunction or array_like, optional
+        rec : SparseTimeFunction, required
+            The interpolated receiver data to be injected.
+        u0 : Function or float, required, (created with save=True)
+            Stores the computed background wavefield.
+        src : SparseTimeFunction, optional, defaults to src at construction
             Time series data for the injected source term.
-        rec : SparseTimeFunction or array_like, optional
-            The interpolated receiver data.
-        u : TimeFunction, optional
-            The forward wavefield.
-        U : TimeFunction, optional
-            The linearized wavefield.
-        vp : Function or float, optional
+        b : Function or float, optional, defaults to b at construction
+            The time-constant buoyancy.
+        v : Function or float, optional, defaults to v at construction
             The time-constant velocity.
-        """
-        # Source term is read-only, so re-use the default
-        src = src or self.geometry.src
-        # Create a new receiver object to store the result
-        rec = rec or Receiver(name='rec', grid=self.model.grid,
-                              time_range=self.geometry.time_axis,
-                              coordinates=self.geometry.rec_positions)
-
-        # Create the forward wavefields u and U if not provided
-        u = u or TimeFunction(name='u', grid=self.model.grid,
-                              time_order=2, space_order=self.space_order)
-        U = U or TimeFunction(name='U', grid=self.model.grid,
-                              time_order=2, space_order=self.space_order)
-
-        # Pick vp from model unless explicitly provided
-        vp = vp or self.model.vp
-
-        # Execute operator and return wavefield and receiver data
-        summary = self.op_jacobian_forward().apply(dm=dmin, u=u, U=U, src=src, rec=rec,
-                                       vp=vp, dt=kwargs.pop('dt', self.dt), **kwargs)
-        return rec, u, U, summary
-
-    
-    def jacobian_adjoint(self, rec, u, v=None, grad=None, vp=None, checkpointing=False, **kwargs):
-        """
-        JacobianAdjoint modeling function for computing the adjoint of the
-        Linearized JacobianForward modeling function, ie. the action of the
-        Jacobian adjoint on an input data.
-
-        Parameters
-        ----------
-        rec : SparseTimeFunction
-            Receiver data.
-        u : TimeFunction
-            Full wavefield `u` (created with save=True).
-        v : TimeFunction, optional
-            Stores the computed wavefield.
-        grad : Function, optional
-            Stores the jacobian_forward field.
-        vp : Function or float, optional
-            The time-constant velocity.
+        wOverQ : Function or float, optional, defaults to wOverQ at construction
+            The time-constant dissipation only attenuation w/Q field.
+        dm : Function or float, optional, defaults to new Function
+            The perturbation to the velocity model.
+        du : Function or float, optional, defaults to new TimeFunction
+            Stores the computed perturbed wavefield.
+        save : int or Buffer, optional
+            The entire (unrolled) wavefield.
 
         Returns
-        -------
-        JacobianAdjoint field and performance summary.
+        ----------
+        Function model perturbation dm, Receiver time series data rec,
+        TimeFunction background wavefield u0, TimeFunction perturbation wavefield du,
+        and performance summary
         """
-        dt = kwargs.pop('dt', self.dt)
-        # JacobianAdjoint symbol
-        grad = grad or Function(name='grad', grid=self.model.grid)
+        # Get model perturbation Function or create
+        dm = dm or Function(name='dm', grid=self.v.grid, space_order=self.space_order)
 
-        # Create the forward wavefield
-        v = v or TimeFunction(name='v', grid=self.model.grid,
-                              time_order=2, space_order=self.space_order)
+        # Get (b, v, wOverQ) from passed arguments or from (b, v, wOverQ) at construction
+        b = b or self.b
+        v = v or self.v
+        wOverQ = wOverQ or self.wOverQ
 
-        # Pick vp from model unless explicitly provided
-        vp = vp or self.model.vp
+        # ensure src, rec, b, v, wOverQ all share the same underlying grid
+        assert src.grid == rec.grid == b.grid == v.grid == wOverQ.grid
 
-        if checkpointing:
-            u = TimeFunction(name='u', grid=self.model.grid,
-                             time_order=2, space_order=self.space_order)
-            cp = DevitoCheckpoint([u])
-            n_checkpoints = None
-            wrap_fw = CheckpointOperator(self.op_fwd(save=False), src=self.geometry.src,
-                                         u=u, vp=vp, dt=dt)
-            wrap_rev = CheckpointOperator(self.op_grad(save=False), u=u, v=v,
-                                          vp=vp, rec=rec, dt=dt, grad=grad)
+        # Make dictionary of the physical model properties
+        self.model.update(b=b, v=v, wOverQ=wOverQ)
 
-            # Run forward
-            wrp = Revolver(cp, wrap_fw, wrap_rev, n_checkpoints, rec.data.shape[0]-2)
-            wrp.apply_forward()
-            summary = wrp.apply_reverse()
-        else:
-            summary = self.op_grad().apply(rec=rec, grad=grad, v=v, u=u, vp=vp,
-                                           dt=dt, **kwargs)
-        return grad, summary
+        # Create the perturbation wavefield if not provided
+        du = du or TimeFunction(name='du', grid=self.v.grid,
+                                save=self.time_axis.num if save else None,
+                                time_order=2, space_order=self.space_order)
+
+        # Execute operator, "splatting" the model dictionary entries
+        summary = self.op_jacobian_adj(save).apply(dm=dm, **self.model, rec=rec,
+                                                          u0=u0, du=du, **kwargs)
+        return dm, u0, du, summary

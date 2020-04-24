@@ -8,18 +8,21 @@ configuration['log-level'] = 'ERROR'
 
 class TestUtils(object):
 
-#     @pytest.mark.skip(reason="temporarily skip")
+    def makeGrid(self, shape, dtype):
+        origin = tuple([0.0 for s in shape])
+        extent = tuple([s - 1 for s in shape])
+        return Grid(extent=extent, shape=shape, origin=origin, dtype=dtype)
+
+    # @pytest.mark.skip(reason="temporarily skip")
     @pytest.mark.parametrize('shape', [(41, 51), (41, 51, 61)])
-    @pytest.mark.parametrize('value', [1.0,1.5,2.0])
+    @pytest.mark.parametrize('value', [1.0, 1.5, 2.0])
     @pytest.mark.parametrize('dtype', [np.float32, ])
     def test_critical_dt(self, shape, value, dtype):
         """
         Test the function returning CFL temporal sampling
         """
         tol = 1.e-5
-        origin = tuple([0.0 for s in shape])
-        extent = tuple([s - 1 for s in shape])
-        grid = Grid(extent=extent, shape=shape, origin=origin, dtype=dtype)
+        grid = self.makeGrid(shape, dtype)
         v = Function(name='v', grid=grid)
         v.data[:] = value
         coeff = 0.38 if len(shape) == 3 else 0.42
@@ -28,8 +31,7 @@ class TestUtils(object):
         print("dt expected,actual; ", dtExpected, dtActual)
         assert np.isclose(dtExpected, dtActual, tol)
 
-
-#     @pytest.mark.skip(reason="temporarily skip")
+    # @pytest.mark.skip(reason="temporarily skip")
     @pytest.mark.parametrize('shape', [(41, 51), (41, 51, 61)])
     @pytest.mark.parametrize('npad', [10, ])
     @pytest.mark.parametrize('w', [2.0 * np.pi * 0.010, ])
@@ -47,9 +49,7 @@ class TestUtils(object):
         """
 
         tol = 10 * np.finfo(dtype).eps
-        origin = tuple([0.0 for s in shape])
-        extent = tuple([s - 1 for s in shape])
-        grid = Grid(extent=extent, shape=shape, origin=origin, dtype=dtype)
+        grid = self.makeGrid(shape, dtype)
         wOverQ = Function(name='wOverQ', grid=grid)
         setup_wOverQ(wOverQ, w, qmin, qmax, npad, sigma=None)
         q = (1 / (wOverQ.data / w))

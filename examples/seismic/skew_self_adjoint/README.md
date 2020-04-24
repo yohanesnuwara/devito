@@ -53,3 +53,5 @@ These notebooks first implement and then test for correctness for three types of
 1. s --> q in all equations
 1. p --> u in all equations
 1. \Gamma --> P_r,P_s
+1. Add checkpointing back to the iso wavesolver
+1. Farfield similarity tests for correctness, ensure 10 wavelengths out that wavelet phase is preserved
