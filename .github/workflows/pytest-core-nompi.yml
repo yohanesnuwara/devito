@@ -48,13 +48,13 @@ jobs:
 
         - name: pytest-ubuntu-py37-gcc5-omp
           python-version: 3.7
-          os: ubuntu-16.04
+          os: ubuntu-18.04
           arch: "gcc-5"
           language: "openmp"
 
         - name: pytest-ubuntu-py38-gcc6-omp
           python-version: 3.8
-          os: ubuntu-16.04
+          os: ubuntu-18.04
           arch: "gcc-6"
           language: "openmp"
 
